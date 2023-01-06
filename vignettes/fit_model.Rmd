@@ -1,0 +1,215 @@
+---
+title: "Model fitting"
+output: html_document
+date: "2022-1-5"
+---
+
+```{r setup, include=FALSE}
+# Load libraries that can't be/haven't been referenced using namespaces
+library(dplyr)
+library(ggnewscale)
+library(ggplot2)
+library(haven)
+library(rstan) 
+library(splines2)
+library(tidybayes)
+library(tidyr)
+
+options(mc.cores = parallel::detectCores())
+rstan::rstan_options(auto_write = TRUE)
+
+devtools::load_all("../../safpet")
+```
+
+# Overview 
+
+In this vignette, we demonstrate how the functions in the R package are used to fit the model to the data set. After 
+fitting the model, we compute the summary measures using the outputs (i.e. the posterior samples of model parameters).
+Based on these summary measures, we quantify the frequencies of sex among users and non-users and use them to calculate 
+the proposed new family planning measures (e.g. the unprotected exposure to risk of unintended pregnancy, the ratio of 
+protected exposure over all women's exposure to risk of unintended pregnancy, etc). 
+
+# The DHS data
+
+We begin by summarizing the variables that we used to select the subsets of the DHS data for the population of interest.
+The actual data pre-processing code/steps are available in `data_preprocessing.Rmd`. There are two datasets saved. 
+
+- `data_df`: entire population regardless of TSLS. 
+- `data_to_fit_df`: subset of `data_df` where TSLS < 2 years
+
+`data_to_fit_df` is used for estimating the TBS density. the data set 
+`data_df' is needed only for calculating the measures (we read it in when we use it, in the relevant section).
+
+## Description of the variables
+
+1. Primary outcome variable
+
+- TIMESINCESEX (V527): TSLS data. We can get data $(z_i, u_i)$ from this variable as follows
+\begin{align*}
+   \text{ When } 100 \leq \text{ TIMESINCESEX } \leq 197 \text{ then } u[i] = 1 \text{ (reporting in days)} \text{ and } z_i = \text{ TIMESINCESEX } - 100,\\
+   \text{ When } 201 \leq \text{ TIMESINCESEX } \leq 252 \text{ then } u[i] = 2 \text{ (reporting in weeks)} \text{ and } z_i = \text{ TIMESINCESEX } - 200,\\
+      \text{ When } 301 \leq \text{ TIMESINCESEX } \leq 397 \text{ then } u[i] = 3 \text{ (reporting in months)} \text{ and } z_i = \text{ TIMESINCESEX } - 300,\\
+         \text{ When } 401 \leq \text{ TIMESINCESEX } \leq 449 \text{ then } u[i] = 4 \text{ (reporting in years)} \text{ and } z_i = \text{ TIMESINCESEX } - 400\\
+\end{align*}
+- Note:
+  - We select women who had sex within the past two years. 
+  - Max days reported is 97 days, max weeks reported is 52 weeks 
+  - We filter months <24 months and year <2 years for model fitting
+  - If less than 12 months, DHS records in days, weeks or months
+  
+2. Other variables
+
+- FPMETHNOW (V312): current method of FP. We indicate women who is "Not using" as non-users; all others are considered as users.
+- AGE1STSEX (V525): age at first intercourse. We indicate women who have "Not had intercourse" (Code 00) as nosex women; later used to compute the proportion of no-sex.
+- KIDDESIRE (V605): desire for more children. We include women who "Wants after 2+ years" or "Wants no more" (women in need), excluding Undecided/Wants, unsure timing/etc.
+- EXPOSURE1 (V623): fecund, pregnant, amenorrheic, or infecund. We include women who are "Fecund", excluding pregnant, amenorrheic, infecund, menopausal women & missing & NIU.
+- AGE (V012): age. We include women who are $\geq$ 15 and $\leq$ 49.
+- MARSTAT (V501): woman's current marital or union status. We include women who are "Never married".
+- COUNTRY: country. "Ghana","Kenya","Nigeria","Zimbabwe".
+- YEAR: year of sample. Most recent survey in each country.
+- PERWEIGHT (V005): sample weight for persons. Consider incorporating in the likelihood later?
+
+## Visualization of the DHS data $(z_i, u_i)$
+
+We can visualize the data as reported, $(z_i, u_i)$, in a histogram. We assign equal probability mass to the set of
+$y_i$ associated with $z_i$. We use the encoding assumptions saved as object in `reporting_info_all.rds`. The following
+shows an example of visualizing the reported data for Users in Ghana.
+
+```{r}
+data_to_fit_df <- readRDS(file = here::here("data/dat_to_fit.rds"))
+data_to_fit_df
+```
+
+Check frequency.
+
+```{r}
+data_to_fit_df |>
+  dplyr::group_by(unit, time) |>
+  dplyr::tally() |>
+  tidyr::spread(key = unit, value = n)
+```
+
+For plotting the data, we need to specify the day range and assumptions regarding reporting errors:
+
+```{r}
+specification <- generate_grids_and_units_specification()
+```
+
+```{r}
+data_to_fit_df2 <- data_to_fit_df %>%
+    mutate(
+      reported_value = time,
+      reported_unit = unit
+    ) %>% 
+  left_join(specification$df)
+```
+
+Plot data by reporting unit:
+```{r}
+ggout <- plot_fit(dat = data_to_fit_df2)
+ggout
+```
+
+# The estimation procedure
+
+## Model fitting 
+
+Based on the data as reported, $(z_i, u_i)$ and the reporting issue assumptions (saved in specification), we fit the 
+model. Below, we show an example of fitting the model for users in Ghana. 
+
+```{r, results = "hide"}
+# set seed to make results reproducible
+set.seed(1234)
+
+knots <- floor(c(seq(1, 14), seq(14 + 7, 6 * 7, 7), seq(6 * 7 + 30, max(specification$grid) - 30, 30)))
+
+ghana_user_fit <- fit_density(
+  data_to_fit_df,
+  specification = specification, 
+  ctry = "Ghana",
+  use = TRUE,
+  knots = knots,
+  filename = "fits/ghana_user_fit", # if non-NULL, saved to file
+  control = list(adapt_delta = 0.9)
+)
+
+ghana_non_user_fit <- fit_density(
+  data_to_fit_df, 
+  specification = specification, 
+  ctry = "Ghana",
+  use = FALSE,
+  knots = knots,
+  filename = "fits/ghana_nonuser_fit",# if non-NULL, saved to file
+  control = list(adapt_delta = 0.9)
+)
+```
+
+Plotting!
+
+```{r}
+ggout <- plot_fit(pmf_est = ghana_user_fit[["res"]], 
+                  dat = ghana_user_fit[["dat"]],
+                  title = "Users in Ghana")
+ggout
+```
+
+```{r}
+ggout <- plot_fit(pmf_est = ghana_non_user_fit[["res"]], 
+                  dat = ghana_non_user_fit[["dat"]],
+                  title="Non-users in Ghana")
+ggout
+```
+
+```{r}
+ggout <- plot_fit(pmf_est = ghana_non_user_fit[["res"]], 
+                  dat = ghana_non_user_fit[["dat"]],
+                  title="Non-users in Ghana")
+ggout
+```
+
+
+## TBS samples from posterior samples 
+
+We can obtain TBS samples from the posterior samples after fitting the model. We compute the summary measures of the 
+estimated TBS distribution.
+
+```{r}
+# input: model fitting results for user
+ghana_user_est_tbs <- estimate_tbs(ghana_user_fit$res) 
+# input: model fitting results for non-user
+ghana_non_user_est_tbs <- estimate_tbs(ghana_non_user_fit$res)
+
+# input: samples of TBS means
+tidybayes::median_qi(ghana_user_est_tbs$exptbs, .width = c(0.5, 0.8, 0.95))
+tidybayes::median_qi(ghana_non_user_est_tbs$exptbs, .width = c(0.5, 0.8, 0.95))
+```
+
+## Old and new measures for family planning
+
+Based on the summary measures of the estimated TBS distributions for users and non-users, we calculate the new measures for family planning. For each country, we also compute the existing (old) measures. 
+
+For this we need the full data set: 
+```{r}
+data_df <- readRDS(file = here::here("data/dat_processed_paper.rds"))
+data_df
+```
+
+```{r}
+data_ghana_df <- data_df |>
+  dplyr::filter(country == "Ghana")
+
+ # input country data including both user and non-user
+ghana_old_measures_df <- calculate_old_measures(data_ghana_df)
+ghana_new_measures_df <- calculate_new_measures(data_ghana_df, ghana_non_user_fit$res, ghana_user_fit$res)
+ghana_new_measures_ci_df <- calculate_new_measures(
+  data_ghana_df, 
+  ghana_non_user_fit$res, 
+  ghana_user_fit$res, 
+  ci_width = c(0.5, 0.8, 0.95)
+)
+
+measures_out_df <- tibble::tibble(ghana_old_measures_df, ghana_new_measures_df)
+measures_add_df <- tibble::tibble(ghana_new_measures_ci_df)
+measures_out_df
+measures_add_df
+```

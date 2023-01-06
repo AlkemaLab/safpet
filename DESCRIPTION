@@ -1,0 +1,13 @@
+Package: safpet
+Type: Package
+Title: Sexual Activity and Family Planning Estimation Tool
+Version: 0.1.0
+Author: Chi Hyun Lee, Herbert Susmann, Leontine Alkema 
+Maintainer: The package maintainer <yourself@somewhere.net>
+Description: to be added
+License: BSD 3-Clause "New" or "Revised" License
+Encoding: UTF-8
+LazyData: true
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
