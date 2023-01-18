@@ -1,8 +1,18 @@
 ---
 title: "Model fitting"
-output: html_document
-date: "2022-1-5"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Model fitting}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
 ---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
 
 ```{r setup, include=FALSE}
 # Load libraries that can't be/haven't been referenced using namespaces
