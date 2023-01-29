@@ -118,8 +118,6 @@ Based on the data as reported, $(z_i, u_i)$ and the reporting issue assumptions 
 model. Below, we show an example of fitting the model for users in Ghana. 
 
 ```{r, results = "hide"}
-# set seed to make results reproducible
-set.seed(1234)
 
 knots <- floor(c(seq(1, 14), seq(14 + 7, 6 * 7, 7), seq(6 * 7 + 30, max(specification$grid) - 30, 30)))
 
@@ -129,6 +127,7 @@ ghana_user_fit <- fit_density(
   ctry = "Ghana",
   use = TRUE,
   knots = knots,
+  seed = 1234,
   filename = "fits/ghana_user_fit", # if non-NULL, saved to file
   control = list(adapt_delta = 0.9)
 )
@@ -139,6 +138,7 @@ ghana_non_user_fit <- fit_density(
   ctry = "Ghana",
   use = FALSE,
   knots = knots,
+  seed = 1235,
   filename = "fits/ghana_nonuser_fit",# if non-NULL, saved to file
   control = list(adapt_delta = 0.9)
 )
