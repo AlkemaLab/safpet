@@ -3,8 +3,8 @@ Type: Package
 Title: Sexual Activity and Family Planning Estimation Tool
 Version: 0.1.0
 Author: Chi Hyun Lee, Herbert Susmann, Leontine Alkema 
-Maintainer: The package maintainer <yourself@somewhere.net>
-Description: to be added
+Maintainer: Leontine Alkema <lalkema@umass.edu>
+Description: Sexual Activity and Family Planning Estimation Tool
 License: BSD 3-Clause "New" or "Revised" License
 Encoding: UTF-8
 LazyData: true
