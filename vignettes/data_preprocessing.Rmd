@@ -1,0 +1,113 @@
+---
+title: "Data processing"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Data processing}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, include=FALSE}
+# Load libraries that can't be/haven't been referenced using namespaces
+library(tidyverse)
+library(dplyr)
+library(knitr)
+library(ipumsr)
+library(patchwork)
+
+devtools::load_all("../../safpet")
+```
+
+# Overview 
+
+In this vignette, we demonstrate how the two datasets, `data_df` and `data_to_fit_df` in `fit_model.Rmd` are preprocessed.
+
+# Importing and processing the DHS data
+
+Demographic and Health Survey (DHS) data that are used in this package are publicly available for free download after registering with the DHS Program at https://dhsprogram.com/data/. We import DHS data including all variables we need for our applications. Please see `fit_model.Rmd` for description of the variables. 
+
+We first process the imported DHS data to produce `data_df` that consists of the entire population of interest regardless of TSLS. This dataset is used when calculating old and new measures for family planning.  
+
+```{r}
+ddi <- read_ipums_ddi("../data/idhs_00006.xml") 
+dat <- read_ipums_micro(ddi)
+dat <- dat %>% 
+  mutate(FPMETHNOW_factor = as_factor(FPMETHNOW)) %>% 
+  mutate(user = (FPMETHNOW_factor != "Not using")) %>%
+  mutate(KIDDESIRE_factor = as_factor(KIDDESIRE)) %>% 
+  mutate(inneed = (KIDDESIRE_factor == "Wants after 2+ years") | (KIDDESIRE_factor == "Wants no more")) %>%
+  mutate(nosex = (AGE1STSEX == 0)) %>%
+  #indicate those who had sex within the past two year: if TSLS less than 12 months, DHS records TSLS in days, weeks or months; max days reported is 97 days, max weeks reported is 52 weeks; hence, filter months < 24 months and year < 2 years 
+  mutate(sa2yrs = (TIMESINCESEX < 324 | TIMESINCESEX == 401)) %>% 
+
+  #subset to keep only women who do not want a child in the next 2 years, excluding Undecided/Wants, unsure timing/etc.
+  filter(inneed) %>%
+    filter(AGE >= 15 & AGE <= 49,
+           MARSTAT == 10, #never married
+           EXPOSURE1 == 0 #excludes pregnant, amenorrheic, infecund, menopausal women & missing & NIU
+           ) %>%
+
+  group_by(COUNTRY) %>%
+    filter(YEAR == max(YEAR)) %>% #keep most recent surveys in each country
+    ungroup() %>% 
+  
+  mutate(days = case_when(TIMESINCESEX >= 100 & TIMESINCESEX <= 197 ~ TIMESINCESEX - 100, #reported in days
+                          TIMESINCESEX >= 201 & TIMESINCESEX <= 252 ~ (TIMESINCESEX - 200) * 7, #reported in weeks
+                          TIMESINCESEX >= 301 & TIMESINCESEX <= 397 ~ (TIMESINCESEX - 300) * 30 + 1, #reported in months; this calculation matches with TIMESINCESEXD in the DHS data
+                          TIMESINCESEX >= 401 & TIMESINCESEX <= 449 ~ (TIMESINCESEX - 400) * 365,
+                          TRUE ~ NA_real_),   
+  country = case_when(COUNTRY == 288 ~ "Ghana",
+                      COUNTRY == 404 ~ "Kenya", 
+                      COUNTRY == 566 ~ "Nigeria", 
+                      COUNTRY == 716 ~ "Zimbabwe"
+                      )) %>%
+  
+  filter(!is.na(country)) %>% 
+  mutate(time = case_when(TIMESINCESEX >= 100 & 
+                            TIMESINCESEX <= 197 ~ TIMESINCESEX - 100, 
+                          TIMESINCESEX >= 201 & 
+                            TIMESINCESEX <= 252 ~ TIMESINCESEX - 200,
+                          TIMESINCESEX >= 301 & 
+                            TIMESINCESEX <= 397 ~ TIMESINCESEX - 300,
+                          TIMESINCESEX >= 401 & 
+                            TIMESINCESEX <= 449 ~ TIMESINCESEX - 400,
+                          TRUE ~ NA_real_),
+         unitd = case_when(TIMESINCESEX >= 100 & TIMESINCESEX <= 197 ~ 1,
+                          TIMESINCESEX >= 201 & TIMESINCESEX <= 252 ~ 7,
+                          TIMESINCESEX >= 301 & TIMESINCESEX <= 397 ~ 31, 
+                          TIMESINCESEX >= 401 & TIMESINCESEX <= 449 ~ 365,
+                          TRUE ~ NA_real_),
+         unit = factor(case_when(TIMESINCESEX >= 100 & 
+                                   TIMESINCESEX <= 197 ~ "day",
+                                TIMESINCESEX >= 201 & 
+                                  TIMESINCESEX <= 252 ~ "week",
+                                TIMESINCESEX >= 301 & 
+                                  TIMESINCESEX <= 397 ~ "month",
+                                TIMESINCESEX >= 401 & 
+                                  TIMESINCESEX <= 449 ~ "year",
+                          ), 
+                       levels = c("day", "week", "month", "year"))) 
+
+saveRDS(dat, file = here::here("data/dat_processed_paper.rds"))
+```
+
+We then select women whose TSLS < 2 years to produce `data_to_fit_df` which will be used for estimating the TBS density.
+
+```{r}
+dat_to_fit <- dat %>% 
+  filter(TIMESINCESEX < 324 | TIMESINCESEX == 401) #selecting those who had sex within the past two year
+
+saveRDS(dat_to_fit, file = here::here("data/dat_to_fit.rds"))
+```
+
+
+
+
+
